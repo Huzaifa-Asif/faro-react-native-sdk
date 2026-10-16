@@ -86,6 +86,9 @@ initializeFaro({
   userActionsOptions: {},
   ignoreUrls: [],
 
+  // Batching - optional, off by default. See "Batching" below.
+  batching: { enabled: true, sendTimeout: 2000, itemLimit: 200 },
+
   // Session - optional
   sessionTracking: {
     enabled: true,
@@ -805,6 +808,38 @@ initializeFaro({
   ],
 });
 ```
+
+### Batching
+
+Batching is off by default: the SDK sends each signal (log, event, measurement, error) in its own request as soon as it is captured. Turn batching on to queue signals and send them together in fewer requests.
+
+```tsx
+initializeFaro({
+  url: 'https://faro-collector-prod-YOUR-REGION.grafana.net/collect/YOUR_TOKEN_HERE',
+  app: { name: 'my-app', version: '1.0.0' },
+  batching: {
+    enabled: true,
+    sendTimeout: 2000, // send the queue every 2 seconds
+    itemLimit: 200, // or as soon as 200 signals are queued
+  },
+});
+```
+
+| Option        | Default | Description                                                        |
+| ------------- | ------- | ------------------------------------------------------------------ |
+| `enabled`     | `false` | Queue signals instead of sending them one by one.                  |
+| `sendTimeout` | `250`   | How often, in milliseconds, the queue is sent. `0` turns this off. |
+| `itemLimit`   | `50`    | Send the queue early when it reaches this many signals.            |
+
+Good to know:
+
+- The queue is sent when either `sendTimeout` or `itemLimit` is reached, whichever comes first.
+- Each request carries one set of app, user, and screen details. If these change while signals are queued (for example, the user moves to another screen), the queue is sent as several requests. The same applies when `beforeSend` changes these details for some signals only. Those requests go out one after another, so a `beforeSend` that gives every signal different details turns one send into many sequential requests and takes longer to deliver. The SDK keeps a limited number of requests pending, so if requests are slow and many sends overlap, signals that don't fit are dropped.
+- Queued signals keep the session they were captured in, even if `startNewSession()` runs before they are sent.
+- `beforeSend` runs when the queue is sent. With the console transport also enabled, it runs a second time for the console copy, so keep `beforeSend` free of side effects (for example, don't count or deduplicate signals in it).
+- Traces are batched by [`@grafana/faro-react-native-tracing`](../react-native-tracing/README.md) first, then pass through `batching` like other signals.
+- Moving to the background does not send the queue early. Queued signals are lost if the OS stops the app before the next send, so avoid very long `sendTimeout` values.
+- Fatal JavaScript errors skip the queue and are sent right away, because the app may exit right after. An open user action can still hold a fatal error until the action ends, and delivery before the app exits is best effort. Other signals still queued when the app stops are lost.
 
 ### Session Configuration
 
